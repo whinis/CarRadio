@@ -18,8 +18,8 @@ SI468x_Radio::SI468x_Radio(int8_t RESET, int8_t INT){
     pinMode(reset, OUTPUT);
     Address=B1100100;
     flashLoad=true;
-    amLocation=0;
-    fmLocation=1;
+    amLocation=1;
+    fmLocation=0;
     spiEnable=false;
 }
 
@@ -70,38 +70,67 @@ void SI468x_Radio::read(byte *data, byte cnt)
     timeout = 100; // wait for CTS
     #if !RADIO_DEBUG
     while(--timeout){
-            Serial.println("Requesting Status");
-            zero = 0;
-            if(spiEnable==false){
-                //request current status
-                Wire.beginTransmission(Address);
-                Wire.write(&zero,1);
-                Wire.endTransmission();
+        zero = 0;
+        if(spiEnable==false){
+            //request current status
+            Wire.beginTransmission(Address);
+            Wire.write(&zero,1);
+            Wire.endTransmission();
 
-                //get back status
-                Wire.beginTransmission(Address);
-                Wire.requestFrom(Address,cnt);
-                Wire.readBytes(data,cnt);
-                Wire.endTransmission();
-            }else{
-                digitalWrite(ssb,HIGH);
-                delay(1);
-                digitalWrite(ssb,LOW);
-                spi_transfer(&zero,1);
-                data=spi_transfer(&zero,cnt);
-                digitalWrite(ssb,HIGH);
+            //get back status
+            Wire.requestFrom(Address,cnt);
+            Wire.readBytes(data,cnt);
+        }else{
+            digitalWrite(ssb,HIGH);
+            delay(1);
+            digitalWrite(ssb,LOW);
+            spi_transfer(&zero,1);
+            data=spi_transfer(&zero,cnt);
+            digitalWrite(ssb,HIGH);
+        }
+        //read the error
+        if(data && (data[0] & 0x40)){
+            Serial.println("Requesting Error");
+            byte *err;
+            byte newArray[cnt+1];
+            Wire.requestFrom(Address,1);
+            Wire.readBytes(err,1);
+                        /*
+            Serial.println("Response:");
+            for(int i=0;i<cnt;i++){
+                Serial.print(i);
+                Serial.print(": ");
+                this->printBits(data[i]);
+                Serial.println();
             }
-            if(data[0] & 0x80)
-                    break;
+            Serial.print("err: ");
+            this->printBits(err[0]);
+            Serial.println();
+            int i =0;
+            for(i=0;i<cnt;i++){
+                newArray[i] = data[i];
+            }
+            newArray[cnt] = err[0];
+            data = newArray;
+            cnt++;
+            */
+        }
+        if(data[0] & 0x80)
+                break;
+        delay(100);
+        Serial.println("Waiting for CTS");
     }
     if(timeout==0){
        Serial.println("timeout");
-    }
-    Serial.print("Response:");
-    for(int i=0;i<cnt;i++){
-        Serial.print(data[i],BIN);
+    }else{
+        Serial.println("Received:");
+        for(int i=0;i<cnt;i++){
+           this->printBits(data[i]);
+            Serial.println();
+        }
     }
     Serial.println();
+
 #else
     data[0]=0x80;
 #endif
@@ -140,8 +169,7 @@ uint16_t SI468x_Radio::read_dynamic(byte *data)
     if(spiEnable==false){
         //request extra bytes
         Wire.requestFrom(Address,cnt);
-        Wire.readBytes(data,cnt);
-        Wire.endTransmission();
+        Wire.readBytes(data2,cnt);
     }else{
         digitalWrite(ssb,HIGH);
         delay(1);
@@ -153,9 +181,9 @@ uint16_t SI468x_Radio::read_dynamic(byte *data)
         }
     }
 
-    Serial.print("Received:");
+    Serial.println("Received:");
     for(int i=0;i<cnt;i++){
-        Serial.print(data[i],BIN);
+       this->printBits(data[i]);
     }
     Serial.println();
 #else
@@ -177,8 +205,9 @@ void SI468x_Radio::write(byte cmd, byte *data,uint16_t len){
         this->read(buf,4);
         if(buf[0] & 0x80)
                 break;
+        else
+          Serial.print("Waiting for CTS ");
     }
-    Serial.print("Sending ");
 
 #if !RADIO_DEBUG
     if(spiEnable==false){
@@ -195,11 +224,6 @@ void SI468x_Radio::write(byte cmd, byte *data,uint16_t len){
         spi_transfer(data,len);
         digitalWrite(ssb,HIGH);
     }
-    Serial.print(cmd,HEX);
-    for(int i=0;i<len;i++){
-        Serial.print(data[i],HEX);
-    }
-    Serial.println();
 
 #else
 /*    Serial.print(cmd,HEX);
@@ -217,9 +241,8 @@ void SI468x_Radio::write_data(byte cmd, byte *data,uint16_t len){
 
 ///////////////////////////System Control////////////////////////////////////////////////
 
-void SI468x_Radio::set_property(uint16_t property_id, uint16_t value){
+void SI468x_Radio::set_property(uint16_t property_id, uint16_t value,byte *buf){
     byte data[5];
-    byte buf[4];
 
     printf("si46xx_set_property(0x%02X,0x%02X)\r\n",property_id,value);
 
@@ -232,15 +255,17 @@ void SI468x_Radio::set_property(uint16_t property_id, uint16_t value){
     this->read(buf,4); //read the response
 }
 
-byte *SI468x_Radio::get_sys_state()
+void SI468x_Radio::get_sys_state(byte *buf)
 {
     byte zero = 0;
-    byte buf[6];
+
+#if RADIO_DEBUG_OUTPUT
+    Serial.println("sys state");
+#endif
 
     this->write(SI46XX_GET_SYS_STATE,&zero,1);
     this->read(buf,6);
     mode = buf[4];
-    return buf;
     /*
     switch(mode)
     {
@@ -255,15 +280,16 @@ byte *SI468x_Radio::get_sys_state()
     }*/
 }
 
-byte *SI468x_Radio::get_part_info()
+void SI468x_Radio::get_part_info(byte *buf)
 {
     uint8_t zero = 0;
-    byte buf[22];
 
+#if RADIO_DEBUG_OUTPUT
+    Serial.println("part info");
+#endif
     this->write(SI46XX_GET_PART_INFO,&zero,1);
     this->read(buf,22);
     chipInfo=*buf;
-    return buf;
 }
 
 
@@ -271,18 +297,22 @@ byte *SI468x_Radio::get_part_info()
 ////////////////////////////////System Initilization///////////////////////////////////////////////
 
 
-void SI468x_Radio::load_init()
+void SI468x_Radio::load_init(byte *buf)
 {
     uint8_t data = 0;
+#if RADIO_DEBUG_OUTPUT
+    Serial.println("load init");
+#endif
     this->write(SI46XX_LOAD_INIT,&data,1);
     delay(4); // wait 4ms (datasheet)
+    if(buf)
+        this->read(buf,4);
 }
 
-void SI468x_Radio::store_image(const byte *data, uint32_t len, uint8_t wait_for_int)
+void SI468x_Radio::store_image(const byte *data, uint32_t len, uint8_t wait_for_int,byte *buf)
 {
     uint32_t remaining_bytes = len;
     uint32_t count_to;
-    byte buf[4];
 
     this->load_init();
     while(remaining_bytes){
@@ -297,8 +327,8 @@ void SI468x_Radio::store_image(const byte *data, uint32_t len, uint8_t wait_for_
             delay(1);
     }
     delay(4); // wait 4ms (datasheet)
-    this->read(buf,4);
-    delay(4); // wait 4ms (datasheet)
+    if(buf)
+        this->read(buf,4);
 }
 
 
@@ -306,28 +336,35 @@ void SI468x_Radio::store_image(const byte *data, uint32_t len, uint8_t wait_for_
 
 void SI468x_Radio::write_host_load_data(byte cmd,
                 const byte *data,
-                uint16_t len)
+                uint16_t len,
+                byte *buf)
 {
 
-    uint8_t zero_data[3];
+    byte sent_data[len+3];
+    int i = 3;
+    sent_data[0] = 0;
+    sent_data[1] = 0;
+    sent_data[2] = 0;
+    for(int q=0;q<len;q++){
+        sent_data[i]=data[q];
+        i++;
+    }
+#if RADIO_DEBUG_OUTPUT
+    Serial.println("host load");
+#endif
 
-    zero_data[0] = 0;
-    zero_data[1] = 0;
-    zero_data[2] = 0;
 #if !RADIO_DEBUG
     if(spiEnable==false){
         Wire.beginTransmission(Address);
         Wire.write(&cmd,1);
-        Wire.write(zero_data,3);
-        Wire.write((byte*)data,len);
+        Wire.write(sent_data,len+3);
         Wire.endTransmission();
     }else{
         digitalWrite(ssb,HIGH);
         delay(1);
         digitalWrite(ssb,LOW);
         spi_transfer(&cmd,1);
-        spi_transfer(zero_data,3);
-        spi_transfer((byte*)data,len);
+        spi_transfer(sent_data,len+3);
         digitalWrite(ssb,HIGH);
     }
 
@@ -336,23 +373,25 @@ void SI468x_Radio::write_host_load_data(byte cmd,
     Serial.write(zero_data,3);
     Serial.write((byte*)data,len);
 #endif
+    if(buf)
+        this->read(buf,4);
 }
 
-void SI468x_Radio::powerup()
+void SI468x_Radio::powerup(byte *buf)
 {
-    uint8_t data[15];
-    byte buf[4];
-
+    byte data[15];
+#if RADIO_DEBUG_OUTPUT
+    Serial.println("powerup");
+#endif
     data[0] = 0x80; // ARG1
-    data[1] = (1<<4) | (7<<0); // ARG2 CLK_MODE=0x1 TR_SIZE=0x7
-    //data[2] = 0x28; // ARG3 IBIAS=0x28
+    data[1] = 0x00; // ARG2 CLK_MODE=0x1 TR_SIZE=0x7
     data[2] = 0x48; // ARG3 IBIAS=0x48
     data[3] = 0x00; // ARG4 XTAL
     data[4] = 0xF9; // ARG5 XTAL // F8
     data[5] = 0x24; // ARG6 XTAL
     data[6] = 0x01; // ARG7 XTAL 19.2MHz
     data[7] = 0x1F; // ARG8 CTUN
-    data[8] = 0x00 | (1<<4); // ARG9
+    data[8] = 0x10; // ARG9
     data[9] = 0x00; // ARG10
     data[10] = 0x00; // ARG11
     data[11] = 0x00; // ARG12
@@ -362,19 +401,24 @@ void SI468x_Radio::powerup()
 
     this->write_data(SI46XX_POWER_UP,data,15);
     delay(1); // wait 20us after powerup (datasheet)
+    if(buf)
+        this->read(buf,4);
 }
 
-void SI468x_Radio::boot()
+void SI468x_Radio::boot(byte *buf)
 {
-    uint8_t data = 0;
-    byte buf[4];
-
-    this->write_data(SI46XX_BOOT,&data,1);
+    byte zero = 0;
+#if RADIO_DEBUG_OUTPUT
+    Serial.println("boot");
+#endif
+    this->write_data(SI46XX_BOOT,&zero,1);
     delay(300); // 63ms at analog fm, 198ms at DAB
-    this->read(buf,4);
+
+
+    //this->read(buf,4);
 }
 
-void SI468x_Radio::flash_load_image(uint32_t address){
+void SI468x_Radio::flash_load_image(uint32_t address,byte *buf){
     byte data[11];
     byte cmd=SI46XX_FLASH_LOAD;
 
@@ -391,9 +435,9 @@ void SI468x_Radio::flash_load_image(uint32_t address){
     data[9] = 0;
     data[10] = 0;
 
-    this->load_init();
-
     this->write(cmd,data,11);
+    if(buf)
+        this->read(buf,4);
 }
 void SI468x_Radio::resetChip(){
     Serial.println("Resetting si46xx");
@@ -443,6 +487,13 @@ void SI468x_Radio::init_firmware(uint8_t location,uint8_t patching)
     this->write_host_load_data(SI46XX_HOST_LOAD, miniPatch, 1024); //load the minipatch into memory first
     delay(4); // wait 4ms (datasheet)
     this->load_init();
+    Serial.println("Response:");
+      for(int i=0;i<4;i++){
+          Serial.print(i);
+          Serial.print(": ");
+          this->printBits(buf[i]);
+          Serial.println();
+      }
 
     if(patching == 1)   // we are attempting to update the flash rom, return here
         return;
@@ -450,13 +501,10 @@ void SI468x_Radio::init_firmware(uint8_t location,uint8_t patching)
     Serial.println("Loading Fullpatch");
     this->flash_load_image(0x00002000+(0x00002000*location));
     this->load_init();
+    delay(4); // wait 4ms (datasheet)
     Serial.println("Loading Firmware");
     this->flash_load_image(0x00008000+(0x00086000*location));
-
-
     this->boot();
-    this->get_sys_state();
-    this->get_part_info();
 }
 
 void SI468x_Radio::init_fm()
@@ -480,25 +528,21 @@ void SI468x_Radio::init_am()
 
 ////////////////////////////////FM FUNCTIONS//////////////////////////
 
-byte *SI468x_Radio::fm_rsq_status()
+void SI468x_Radio::fm_rsq_status(byte *buf)
 {
         byte data = 0;
-        byte buf[20];
 
         this->write(SI46XX_FM_RSQ_STATUS,&data,1);
         this->read(buf,20);
-        return buf;
 }
 
-byte *SI468x_Radio::fm_rds_blockcount()
+void SI468x_Radio::fm_rds_blockcount(byte *buf)
 {
         //uint8_t data = 1; // clears block counts if set
         byte data = 0; // clears block counts if set
-        byte  buf[10];
 
         this->write_data(SI46XX_FM_RDS_BLOCKCOUNT,&data,1);
         this->read(buf,10);
-        return buf;
 }
 fm_rds_data_t SI468x_Radio::get_rds_data(){
     return fm_rds_data;
@@ -550,10 +594,9 @@ uint8_t SI468x_Radio::rds_parse(uint16_t *block)
 }
 
 
-byte *SI468x_Radio::fm_rds_status()
+void SI468x_Radio::fm_rds_status(byte *buf)
 {
         byte data = 0;
-        byte buf[20];
         uint16_t timeout;
         uint16_t blocks[4];
 
@@ -576,13 +619,11 @@ byte *SI468x_Radio::fm_rds_status()
         }
         if(!timeout)
                 printf("Timeout\r\n");
-        return buf;
 }
 
-byte *SI468x_Radio::fm_tune_freq(uint32_t khz, uint16_t antcap)
+void SI468x_Radio::fm_tune_freq(uint32_t khz, uint16_t antcap,byte *buf)
 {
         byte data[5];
-        byte buf[4];
 
 
         //data[0] = (1<<4) | (1<<0); // force_wb, low side injection
@@ -595,13 +636,11 @@ byte *SI468x_Radio::fm_tune_freq(uint32_t khz, uint16_t antcap)
         this->write_data(SI46XX_FM_TUNE_FREQ,data,5);
 
         this->read(buf,4);
-        return buf;
 }
 
-byte *SI468x_Radio::fm_seek_start(uint8_t up, uint8_t wrap)
+void SI468x_Radio::fm_seek_start(uint8_t up, uint8_t wrap,byte *buf)
 {
         byte data[5];
-        byte buf[4];
 
         data[0] = 0;
         data[1] = (up&0x01)<<1 | (wrap&0x01);
@@ -611,16 +650,14 @@ byte *SI468x_Radio::fm_seek_start(uint8_t up, uint8_t wrap)
         this->write(SI46XX_FM_SEEK_START,data,5);
 
         this->read(buf,4);
-        return buf;
 }
 
 
 
 //////////////////////////FLASH COMMANDS//////////////////////////////////////
-byte *SI468x_Radio::flash_erase_sector(uint32_t address)
+void SI468x_Radio::flash_erase_sector(uint32_t address,byte *buf)
 {
         byte data[5];
-        byte buf[4];
 
         data[0] = 0xFE;
         data[1] = 0xC0;
@@ -632,12 +669,10 @@ byte *SI468x_Radio::flash_erase_sector(uint32_t address)
         this->write(SI46XX_FLASH_LOAD,data,6);
 
         this->read(buf,4);
-        return buf;
 }
-byte *SI468x_Radio::flash_erase_chip()
+void SI468x_Radio::flash_erase_chip(byte *buf)
 {
         byte data[5];
-        byte buf[4];
 
         data[0] = 0xFF;
         data[1] = 0xDE;
@@ -645,12 +680,10 @@ byte *SI468x_Radio::flash_erase_chip()
         this->write(SI46XX_FLASH_LOAD,data,6);
 
         this->read(buf,4);
-        return buf;
 }
-byte *SI468x_Radio::flash_write_block(uint32_t address, uint32_t size, const byte *data, uint32_t len)
+void SI468x_Radio::flash_write_block(uint32_t address, uint32_t size, const byte *data,byte *buf)
 {
         byte arguments[15];
-        byte buf[4];
         byte cmd=SI46XX_FLASH_LOAD;
 
         arguments[0] = 0xF0;
@@ -673,21 +706,56 @@ byte *SI468x_Radio::flash_write_block(uint32_t address, uint32_t size, const byt
             Wire.beginTransmission(Address);
             Wire.write(&cmd,1);
             Wire.write(arguments,15);
-            Wire.write((byte*)data,len);
+            Wire.write((byte*)data,sizeof(data));
             Wire.endTransmission();
         }else{
             spi_transfer(&cmd,1);
             spi_transfer(arguments,15);
-            spi_transfer((byte*)data,len);
+            spi_transfer((byte*)data,sizeof(data));
         }
 
         this->read(buf,4);
-        return buf;
 }
-byte *SI468x_Radio::flash_set_properties(uint16_t write, uint16_t read, uint16_t hs_read, uint16_t erase_sector, uint16_t erase_chip)
+
+
+void SI468x_Radio::flash_write_block_verify(uint32_t address, uint32_t size, uint32_t crc, const byte *data,byte *buf)
 {
         byte arguments[15];
-        byte buf[4];
+        byte cmd=SI46XX_FLASH_LOAD;
+
+        arguments[0] = 0xF3;
+        arguments[1] = 0x0C;
+        arguments[2] = 0xED;
+        arguments[3] = (crc >> 24)& 0xff;
+        arguments[4] = (crc >> 16)& 0xff;
+        arguments[5] = (crc >> 8)& 0xff;
+        arguments[6] = (crc)& 0xff;
+        arguments[7] = (address >> 24)& 0xff;
+        arguments[8] = (address >> 16)& 0xff;
+        arguments[9] = (address >> 8)& 0xff;
+        arguments[10] = (address)& 0xff;
+        arguments[11] = (size >> 24)& 0xff;
+        arguments[12] = (size >> 16)& 0xff;
+        arguments[13] = (size >> 8)& 0xff;
+        arguments[14] = (size)& 0xff;
+
+        if(spiEnable==false){
+            Wire.beginTransmission(Address);
+            Wire.write(&cmd,1);
+            Wire.write(arguments,15);
+            Wire.write((byte*)data,sizeof(data));
+            Wire.endTransmission();
+        }else{
+            spi_transfer(&cmd,1);
+            spi_transfer(arguments,15);
+            spi_transfer((byte*)data,sizeof(data));
+        }
+
+        this->read(buf,4);
+}
+void SI468x_Radio::flash_set_properties(uint16_t write, uint16_t read, uint16_t hs_read, uint16_t erase_sector, uint16_t erase_chip,byte *buf)
+{
+        byte arguments[15];
 
         arguments[0] = 0x10;
         arguments[1] = 0x00;
@@ -716,7 +784,6 @@ byte *SI468x_Radio::flash_set_properties(uint16_t write, uint16_t read, uint16_t
         this->write(SI46XX_FLASH_LOAD,arguments,23);
 
         this->read(buf,4);
-        return buf;
 }
 
 
@@ -733,4 +800,82 @@ void SI468x_Radio::eepromWriteInt(int address, int value){
    EEPROM.write(address+1, value & 0xFF);
 }
 
+
+void SI468x_Radio::printBits(byte myByte){
+ for(byte mask = 0x80; mask; mask >>= 1){
+   if(mask  & myByte)
+       Serial.print('1');
+   else
+       Serial.print('0');
+ }
+}
+
+void SI468x_Radio::printHex(int num, int precision) {
+     char tmp[16];
+     char format[128];
+
+     sprintf(format, "%%.%dX", precision);
+
+     sprintf(tmp, format, num);
+     Serial.print(tmp);
+}
+
+
+//////////////////////////////////// STUBS //////////////////////////////////////////////
+//these functions don't require a buffer and just discard the data
+void SI468x_Radio::set_property(uint16_t property_id, uint16_t value){
+    this->set_property(property_id,value,buf);
+}
+
+void SI468x_Radio::load_init(){
+    this->load_init(buf);
+}
+
+void SI468x_Radio::store_image(const byte *data, uint32_t len, uint8_t wait_for_int){
+    this->store_image(data,len, wait_for_int,buf);
+}
+
+void SI468x_Radio::write_host_load_data(byte cmd,const byte *data,uint16_t len){
+    this->write_host_load_data(cmd,data, len,buf);
+
+}
+void SI468x_Radio::powerup(){
+    this->powerup(buf);
+}
+
+void SI468x_Radio::boot(){
+    this->boot(buf);
+}
+
+void SI468x_Radio::flash_load_image(uint32_t address){
+    this->flash_load_image(address,buf);
+}
+
+void SI468x_Radio::fm_tune_freq(uint32_t khz, uint16_t antcap){
+    this->fm_tune_freq(khz,antcap,buf);
+}
+
+void SI468x_Radio::fm_seek_start(uint8_t up, uint8_t wrap){
+    this->fm_seek_start(up,wrap,buf);
+}
+
+void SI468x_Radio::flash_erase_sector(uint32_t address){
+    this->flash_erase_sector(address,buf);
+}
+
+void SI468x_Radio::flash_erase_chip(){
+    this->flash_erase_chip(buf);
+}
+
+void SI468x_Radio::flash_write_block(uint32_t address, uint32_t size, const byte *data){
+    this->flash_write_block(address,size,data,buf);
+}
+
+void SI468x_Radio::flash_write_block_verify(uint32_t address, uint32_t size, uint32_t crc, const byte *data){
+    this->flash_write_block_verify(address,size,crc,data,buf);
+}
+
+void SI468x_Radio::flash_set_properties(uint16_t write, uint16_t read, uint16_t hs_read, uint16_t erase_sector, uint16_t erase_chip){
+    this->flash_set_properties(write,read,hs_read,erase_sector,erase_chip,buf);
+}
 

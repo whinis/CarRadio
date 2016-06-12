@@ -28,6 +28,7 @@
 #include <Wire.h>
 
 #define RADIO_DEBUG false
+#define RADIO_DEBUG_OUTPUT true
 
 #define SI46XX_RD_REPLY 0x00
 #define SI46XX_POWER_UP 0x01
@@ -193,49 +194,86 @@ class SI468x_Radio{
         uint16_t read_dynamic(byte *data);
         void write_host_load_data(byte cmd,
                         const byte *data,
+                        uint16_t len,
+                        byte *buf);
+        void write_host_load_data(byte cmd,
+                        const byte *data,
                         uint16_t len);
         byte *spi_transfer(byte *data,uint16_t len);
 
+        void store_image(const byte *data, uint32_t len, uint8_t wait_for_int,byte *buf);
         void store_image(const byte *data, uint32_t len, uint8_t wait_for_int);
         void init_firmware(uint8_t location, uint8_t patching = 0);
         void init_am();
         void init_fm();
+        void load_init(byte *buf);
         void load_init();
+        void powerup(byte *buf);
         void powerup();
+        void boot(byte *buf);
         void boot();
         void resetChip();
+        void flash_load_image(uint32_t address,byte *buf);
         void flash_load_image(uint32_t address);
 
 
         void set_address(byte a);
+        void set_property(uint16_t property_id, uint16_t value,byte *buf);
         void set_property(uint16_t property_id, uint16_t value);
         void set_flash_load(bool load);
         void set_spi_mode(int8_t MOSI, int8_t MISO,int8_t CLK, int8_t SSB);
         void set_i2c_mode();
-        byte *get_part_info();
-        byte *get_sys_state();
+        void get_part_info(byte *buf);
+        void get_sys_state(byte *buf);
         fm_rds_data_t get_rds_data();
 
 
-        byte *fm_seek_start(uint8_t up, uint8_t wrap);
-        byte *fm_tune_freq(uint32_t khz, uint16_t antcap);
-        byte *fm_rsq_status(void);
-        byte *fm_rds_status(void);
-        byte *fm_rds_blockcount(void);
+        void fm_seek_start(uint8_t up, uint8_t wrap,byte *buf);
+        void fm_seek_start(uint8_t up, uint8_t wrap);
+        void fm_tune_freq(uint32_t khz, uint16_t antcap,byte *buf);
+        void fm_tune_freq(uint32_t khz, uint16_t antcap);
+        void fm_rsq_status(byte *buf);
+        void fm_rds_status(byte *buf);
+        void fm_rds_blockcount(byte *buf);
+        void fm_rds_blockcount(void);
         uint8_t rds_parse(uint16_t *block);
 
 
-        byte *flash_erase_sector(uint32_t address);
-        byte *flash_erase_chip();
-        byte *flash_write_block(uint32_t address,
+        void flash_erase_sector(uint32_t address,byte *buf);
+        void flash_erase_sector(uint32_t address);
+        void flash_erase_chip(byte *buf);
+        void flash_erase_chip();
+        void flash_write_block(uint32_t address,
                                  uint32_t size,
                                  const byte *data,
-                                 uint32_t len);
-        byte *flash_set_properties(uint16_t write,
+                                 byte *buf);
+        void flash_write_block(uint32_t address,
+                                 uint32_t size,
+                                 const byte *data);
+        void flash_write_block_verify(uint32_t address,
+                                       uint32_t size,
+                                       uint32_t crc,
+                                       const byte *data,
+                                       byte *buf);
+        void flash_write_block_verify(uint32_t address,
+                                       uint32_t size,
+                                       uint32_t crc,
+                                       const byte *data);
+        void flash_set_properties(uint16_t write,
+                                   uint16_t read,
+                                   uint16_t hs_read,
+                                   uint16_t erase_sector,
+                                   uint16_t erase_chip,
+                                   byte *buf);
+        void flash_set_properties(uint16_t write,
                                    uint16_t read,
                                    uint16_t hs_read,
                                    uint16_t erase_sector,
                                    uint16_t erase_chip);
+
+        void printBits(byte myByte);
+
+        byte *buf;
 
 
 
@@ -289,6 +327,10 @@ class SI468x_Radio{
 
         int eepromReadInt(int address);
         void eepromWriteInt(int address, int value);
+        void printHex(int num, int precision);
+
+        void printResponse(byte *buf);
+        int getSize(byte* ch);
 };
 
 #endif
